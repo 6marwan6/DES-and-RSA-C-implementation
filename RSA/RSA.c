@@ -3,17 +3,125 @@
 #include <stdlib.h>
 #include <time.h>
 
-//some helper functions
-
-
-
-
-/* Functions to be implemented later */
-void mode_encrypt(const char *pub, const char *pt, const char *ct){};
-void mode_decrypt(const char *priv, const char *ct, const char *pt){};
-
-// Forward declaration
 static uint16_t generate_prime_16bit(void);
+static uint32_t compute_invN(uint32_t N);
+static uint32_t compute_R2modN(uint32_t N);
+uint32_t rsa_modexp(uint32_t value, uint32_t exp, uint32_t N, uint32_t invN, uint32_t R2modN);
+
+// Encryption: read (e, N) from public key, read plaintext, compute C = P^e mod N
+void mode_encrypt(const char *pub, const char *pt, const char *ct)
+{
+    FILE *pub_file = fopen(pub, "r");
+    if (!pub_file) {
+        perror(pub);
+        exit(1);
+    }
+    
+    uint32_t e, N;
+    if (fscanf(pub_file, "%X %X", &e, &N) != 2) {
+        fprintf(stderr, "Error: invalid public key format\n");
+        fclose(pub_file);
+        exit(1);
+    }
+    fclose(pub_file);
+    
+    // Read plaintext
+    FILE *pt_file = fopen(pt, "r");
+    if (!pt_file) {
+        perror(pt);
+        exit(1);
+    }
+    
+    uint32_t plaintext;
+    if (fscanf(pt_file, "%X", &plaintext) != 1) {
+        fprintf(stderr, "Error: invalid plaintext format\n");
+        fclose(pt_file);
+        exit(1);
+    }
+    fclose(pt_file);
+    
+    // Validate plaintext < N
+    if (plaintext >= N) {
+        fprintf(stderr, "Error: plaintext must be less than N\n");
+        exit(1);
+    }
+    
+    // Precompute Montgomery parameters
+    uint32_t invN = compute_invN(N);
+    uint32_t R2modN = compute_R2modN(N);
+    
+    // Encrypt: C = P^e mod N
+    uint32_t ciphertext = rsa_modexp(plaintext, e, N, invN, R2modN);
+    
+    // Write ciphertext
+    FILE *ct_file = fopen(ct, "w");
+    if (!ct_file) {
+        perror(ct);
+        exit(1);
+    }
+    fprintf(ct_file, "%08X\n", ciphertext);
+    fclose(ct_file);
+    
+    printf("Encryption complete: P=%08X -> C=%08X\n", plaintext, ciphertext);
+}
+
+// Decryption: read (d, N) from private key, read ciphertext, compute P = C^d mod N
+void mode_decrypt(const char *priv, const char *ct, const char *pt)
+{
+    FILE *priv_file = fopen(priv, "r");
+    if (!priv_file) {
+        perror(priv);
+        exit(1);
+    }
+    
+    uint32_t d, N;
+    if (fscanf(priv_file, "%X %X", &d, &N) != 2) {
+        fprintf(stderr, "Error: invalid private key format\n");
+        fclose(priv_file);
+        exit(1);
+    }
+    fclose(priv_file);
+    
+    // Read ciphertext
+    FILE *ct_file = fopen(ct, "r");
+    if (!ct_file) {
+        perror(ct);
+        exit(1);
+    }
+    
+    uint32_t ciphertext;
+    if (fscanf(ct_file, "%X", &ciphertext) != 1) {
+        fprintf(stderr, "Error: invalid ciphertext format\n");
+        fclose(ct_file);
+        exit(1);
+    }
+    fclose(ct_file);
+    
+    // Validate ciphertext < N
+    if (ciphertext >= N) {
+        fprintf(stderr, "Error: ciphertext must be less than N\n");
+        exit(1);
+    }
+    
+    // Precompute Montgomery parameters
+    uint32_t invN = compute_invN(N);
+    uint32_t R2modN = compute_R2modN(N);
+    
+    // Decrypt: P = C^d mod N
+    uint32_t plaintext = rsa_modexp(ciphertext, d, N, invN, R2modN);
+    
+    // Write plaintext
+    FILE *pt_file = fopen(pt, "w");
+    if (!pt_file) {
+        perror(pt);
+        exit(1);
+    }
+    fprintf(pt_file, "%08X\n", plaintext);
+    fclose(pt_file);
+    
+    printf("Decryption complete: C=%08X -> P=%08X\n", ciphertext, plaintext);
+}
+
 
 // Compute GCD for checking coprimality
 static uint32_t gcd(uint32_t a, uint32_t b)
@@ -226,14 +334,7 @@ static uint16_t generate_prime_16bit(void)
     return candidate;
 }
 
-// MONTGOMERY MULTIPLICATION CORE//
-
-/**
- * @param x     - Input value (up to 64 bits)
- * @param N     - Modulus
- * @param invN  - N^(-1) mod R, precomputed
- * @return      - x * R^(-1) mod N
- */
+// Montgomery REDC - performs x * R^(-1) mod N where R = 2^32
 static inline uint32_t mont_redc(uint64_t x, uint32_t N, uint32_t invN)
 {
     uint64_t t1 = x;
@@ -269,16 +370,8 @@ static inline uint32_t from_mont(uint32_t aR,
 }
 
 
-/**
- * RSA Modular Exponentiation 
- * @param value  - Base value (plaintext or ciphertext)
- * @param exp    - Exponent (public or private key)
- * @param N      - Modulus
- * @param invN   - N^(-1) mod R, precomputed
- * @param R2modN - R^2 mod N, precomputed
- * @return       - value^exp mod N
- */
-
+// RSA Modular Exponentiation using square-and-multiply algorithm
+// Computes: value^exp mod N
 uint32_t rsa_modexp(uint32_t value, uint32_t exp,
                     uint32_t N, uint32_t invN, uint32_t R2modN)
 {
