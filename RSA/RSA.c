@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 //some helper functions
 
@@ -8,9 +9,104 @@
 
 
 /* Functions to be implemented later */
-void mode_keygen(const char *pub, const char *priv);
-void mode_encrypt(const char *pub, const char *pt, const char *ct);
-void mode_decrypt(const char *priv, const char *ct, const char *pt);
+void mode_encrypt(const char *pub, const char *pt, const char *ct){};
+void mode_decrypt(const char *priv, const char *ct, const char *pt){};
+
+// Forward declaration
+static uint16_t generate_prime_16bit(void);
+
+// Compute GCD for checking coprimality
+static uint32_t gcd(uint32_t a, uint32_t b)
+{
+    while (b != 0) {
+        uint32_t t = b;
+        b = a % b;
+        a = t;
+    }
+    return a;
+}
+
+// Extended Euclidean Algorithm for modular inverse (64-bit version for phi)
+static uint32_t mod_inverse_64(uint32_t a, uint64_t m)
+{
+    int64_t m0 = (int64_t)m, t, q;
+    int64_t x0 = 0, x1 = 1;
+    
+    if (m == 1) return 0;
+    
+    int64_t a_signed = (int64_t)a;
+    
+    while (a_signed > 1) {
+        q = a_signed / m0;
+        t = m0;
+        m0 = a_signed % m0;
+        a_signed = t;
+        t = x0;
+        x0 = x1 - q * x0;
+        x1 = t;
+    }
+    
+    if (x1 < 0) x1 += (int64_t)m;
+    
+    return (uint32_t)x1;
+}
+
+// Key generation: generate p, q, compute N, phi(N), e, d
+void mode_keygen(const char *pub, const char *priv)
+{
+    srand((unsigned int)time(NULL));
+    
+    // Generate two distinct 16-bit primes
+    uint16_t p = generate_prime_16bit();
+    uint16_t q;
+    do {
+        q = generate_prime_16bit();
+    } while (q == p);
+    
+    // Compute N = p * q (fits in 32 bits)
+    uint32_t N = (uint32_t)p * (uint32_t)q;
+    
+    // Compute phi(N) = (p-1) * (q-1)
+    uint64_t phi_N = (uint64_t)(p - 1) * (uint64_t)(q - 1);
+    
+    // Choose e: common choice is 65537, but if phi_N is small, use smaller e
+    // e must be coprime with phi_N
+    uint32_t e = 65537;
+    if (e >= phi_N) {
+        e = 257;
+    }
+    while (gcd(e, (uint32_t)phi_N) != 1) {
+        e += 2;
+    }
+    
+    // Compute d = e^(-1) mod phi(N)
+    uint32_t d = mod_inverse_64(e, phi_N);
+    
+    // Write public key (e, N) to file
+    FILE *pub_file = fopen(pub, "w");
+    if (!pub_file) {
+        perror(pub);
+        exit(1);
+    }
+    fprintf(pub_file, "%08X %08X\n", e, N);
+    fclose(pub_file);
+    
+    // Write private key (d, N) to file
+    FILE *priv_file = fopen(priv, "w");
+    if (!priv_file) {
+        perror(priv);
+        exit(1);
+    }
+    fprintf(priv_file, "%08X %08X\n", d, N);
+    fclose(priv_file);
+    
+    printf("Key generation complete.\n");
+    printf("p = %u, q = %u\n", p, q);
+    printf("N = %08X\n", N);
+    printf("phi(N) = %lu\n", (unsigned long)phi_N);
+    printf("e = %08X\n", e);
+    printf("d = %08X\n", d);
+}
 
 
 
@@ -56,6 +152,78 @@ static uint32_t compute_R2modN(uint32_t N)
     }
     
     return (uint32_t)R2;
+}
+
+// Simple modular exponentiation for Miller-Rabin (without Montgomery)
+static uint32_t mod_pow(uint32_t base, uint32_t exp, uint32_t mod)
+{
+    uint64_t result = 1;
+    uint64_t b = base % mod;
+    
+    while (exp > 0) {
+        if (exp & 1)
+            result = (result * b) % mod;
+        b = (b * b) % mod;
+        exp >>= 1;
+    }
+    
+    return (uint32_t)result;
+}
+
+// Miller-Rabin primality test
+// Returns 1 if n is probably prime, 0 if composite
+static int miller_rabin(uint32_t n, int k)
+{
+    if (n < 2) return 0;
+    if (n == 2 || n == 3) return 1;
+    if (n % 2 == 0) return 0;
+    
+    // Write n-1 as 2^r * d
+    uint32_t d = n - 1;
+    int r = 0;
+    while ((d & 1) == 0) {
+        d >>= 1;
+        r++;
+    }
+    
+    // Witness loop
+    for (int i = 0; i < k; i++) {
+        // Pick random a in [2, n-2]
+        uint32_t a = 2 + rand() % (n - 3);
+        
+        uint32_t x = mod_pow(a, d, n);
+        
+        if (x == 1 || x == n - 1)
+            continue;
+        
+        int composite = 1;
+        for (int j = 0; j < r - 1; j++) {
+            x = (uint32_t)(((uint64_t)x * x) % n);
+            if (x == n - 1) {
+                composite = 0;
+                break;
+            }
+        }
+        
+        if (composite)
+            return 0;
+    }
+    
+    return 1;
+}
+
+// Generate a random 16-bit prime
+static uint16_t generate_prime_16bit(void)
+{
+    uint16_t candidate;
+    
+    do {
+        // Generate random odd number in range [32768, 65535] (15-16 bits)
+        candidate = (uint16_t)(0x8000 | (rand() & 0x7FFF));
+        candidate |= 1; // Make it odd
+    } while (!miller_rabin(candidate, 10));
+    
+    return candidate;
 }
 
 // MONTGOMERY MULTIPLICATION CORE//
