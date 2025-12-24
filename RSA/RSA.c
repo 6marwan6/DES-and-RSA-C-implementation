@@ -1,6 +1,19 @@
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 //some helper functions
+
+
+
+
+/* Functions to be implemented later */
+void mode_keygen(const char *pub, const char *priv);
+void mode_encrypt(const char *pub, const char *pt, const char *ct);
+void mode_decrypt(const char *priv, const char *ct, const char *pt);
+
+
+
 
 
 //Extended Euclidean Algorithm for modular inverse
@@ -122,3 +135,70 @@ uint32_t rsa_modexp(uint32_t value, uint32_t exp,
 }
 
 
+
+
+
+static void check_file_exists(const char *fname)
+{
+    FILE *f = fopen(fname, "r");
+    if (!f) {
+        perror(fname);
+        exit(1);
+    }
+    fclose(f);
+}
+
+
+
+
+int main(int argc, char *argv[])
+{
+    if (argc < 2) {
+        fprintf(stderr,
+            "Usage:\n"
+            "  %s g public_key.txt private_key.txt\n"
+            "  %s e public_key.txt plaintext.txt ciphertext.txt\n"
+            "  %s d private_key.txt ciphertext.txt plaintext.txt\n",
+            argv[0], argv[0], argv[0]);
+        return 1;
+    }
+
+    char mode = argv[1][0];
+
+    switch (mode) {
+
+    case 'g':   //// Key generation 
+        if (argc != 4) {
+            fprintf(stderr, "Error: invalid arguments for key generation\n");
+            return 1;
+        }
+        mode_keygen(argv[2], argv[3]);
+        break;
+
+    case 'e':   //// Encryption 
+        if (argc != 5) {
+            fprintf(stderr, "Error: invalid arguments for encryption\n");
+            return 1;
+        }
+        check_file_exists(argv[2]); // public key 
+        check_file_exists(argv[3]); // plaintext 
+        mode_encrypt(argv[2], argv[3], argv[4]);
+        break;
+
+    case 'd':    //// Decryption 
+        if (argc != 5) {
+            fprintf(stderr, "Error: invalid arguments for decryption\n");
+            return 1;
+        }
+        check_file_exists(argv[2]); // private key 
+        check_file_exists(argv[3]); // ciphertext 
+        mode_decrypt(argv[2], argv[3], argv[4]);
+        break;
+
+    default:
+        fprintf(stderr, "Error: unknown mode '%c' (use g, e, or d)\n", mode);
+        return 1;
+    }
+
+    return 0;
+}
